@@ -93,6 +93,10 @@ axis_charge = hist.axis.Regular(2, -2., 2., underflow=False, overflow=False, nam
 down_up_axis = hist.axis.Regular(2, -2., 2., underflow=False, overflow=False, name = "downUpVar")
 down_nom_up_axis = hist.axis.Regular(3, -1.5, 1.5, underflow=False, overflow=False, name = "downNomUpVar")
 
+# run edges chosen to separate eras (era F post VFP: [278769, 278808], era G [278820, 280385], era F [281613, 284044])
+run_edges = np.array([278768, 278808, 279588, 279767, 280017, 280385, 282037, 283270, 283478, 283934, 284044])
+run_edges_lumi = np.array([0.0, 0.419, 2.332, 4.329, 6.247, 8.072, 10.152, 12.265, 14.067, 15.994, 16.812])
+
 # for fake estimation
 # binary categories for simple ABCD method
 passIsoName = "passIso"
@@ -146,8 +150,8 @@ def get_default_ptbins(analysis_label, unfolding=False, gen=False):
         vals[0] += 2
         vals[2] += 2
     elif gen:
-        values[0] -= 2
-        values[1] += 2
+        vals[0] -= 2
+        vals[1] += 2
     return vals
 
 def get_default_etabins(analysis_label=None):
@@ -162,6 +166,7 @@ def get_default_mz_window():
 # following list is used in other scripts to track what steps are charge dependent
 # but assumes the corresponding efficiencies were made that way
 muonEfficiency_chargeDependentSteps = ["reco", "tracking", "idip", "trigger", "antitrigger"] # antitrigger = P(failTrig|IDIP), similar to antiiso = P(failIso|trigger)
+muonEfficiency_altBkgSyst_effSteps = ["tracking"]
 muonEfficiency_standaloneNumberOfValidHits = 1 # to use as "var >= this" (if this=0 the define for the cut is not used at all)
 
 def getIsoMtRegionID(passIso=True, passMT=True):
@@ -290,11 +295,11 @@ def common_parser(analysis_label=""):
     parser.add_argument("-p", "--postfix", type=str, help="Postfix for output file name", default=None)
     parser.add_argument("--forceDefaultName", action='store_true', help="Don't modify the name of the output file with some default strings")
     parser.add_argument("--theoryCorr", nargs="*", type=str, action=NoneFilterAction,
-        default=["scetlib_dyturbo", ], choices=theory_corrections.valid_theory_corrections(), 
+        default=["scetlib_dyturbo", "scetlib_dyturboCT18ZVars", "scetlib_dyturboCT18Z_pdfas"], choices=theory_corrections.valid_theory_corrections(), 
         help="Apply corrections from indicated generator. First will be nominal correction.")
     parser.add_argument("--theoryCorrAltOnly", action='store_true', help="Save hist for correction hists but don't modify central weight")
     parser.add_argument("--ewTheoryCorr", nargs="*", type=str, action=NoneFilterAction, choices=theory_corrections.valid_ew_theory_corrections(), 
-        default=["winhacnloew", "virtual_ew_wlike", "pythiaew_ISR", "horaceqedew_FSR", "horacelophotosmecoffew_FSR", ],
+        default=["winhacnloew", "powhegFOEW", "pythiaew_ISR", "horaceqedew_FSR", "horacelophotosmecoffew_FSR", ],
         help="Add EW theory corrections without modifying the default theoryCorr list. Will be appended to args.theoryCorr")
     parser.add_argument("--skipHelicity", action='store_true', help="Skip the qcdScaleByHelicity histogram (it can be huge)")
     parser.add_argument("--noRecoil", action='store_true', help="Don't apply recoild correction")
@@ -344,7 +349,13 @@ def common_parser(analysis_label=""):
         parser.add_argument("--noSmooth3dsf", dest="smooth3dsf", action='store_false', help="If true (default) use smooth 3D scale factors instead of the original 2D ones (but eff. systs are still obtained from 2D version)")
         parser.add_argument("--isoEfficiencySmoothing", action='store_true', help="If isolation SF was derived from smooth efficiencies instead of direct smoothing") 
         parser.add_argument("--noScaleFactors", action="store_true", help="Don't use scale factors for efficiency (legacy option for tests)")
-        parser.add_argument("--isolationDefinition", choices=["iso04vtxAgn", "iso04", "iso03chg", "iso04chgvtxAgn"], default="iso04vtxAgn",  help="Isolation type (and corresponding scale factors)")
+        parser.add_argument("--isolationDefinition", choices=["iso04vtxAgn", "iso04", "iso04chg", "iso04chgvtxAgn"], default="iso04vtxAgn",  help="Isolation type (and corresponding scale factors)")
+        parser.add_argument("--isolationThreshold", default=0.15, type=float, help="Threshold for isolation cut")
+        parser.add_argument("--reweightPixelMultiplicity", action='store_true', help="Reweight events based on number of valid pixel hits for the muons")
+        parser.add_argument("--requirePixelHits", action='store_true', help="Require good muons to have at least one valid pixel hit used in the track refit.")
+        parser.add_argument("--pixelMultiplicityStat", action='store_true', help="Include (very small) statistical uncertainties for pixel multiplicity variation")
+
+
 
     commonargs,_ = parser.parse_known_args()
 
@@ -358,7 +369,20 @@ def common_parser(analysis_label=""):
             # since the dataAltSig tag-and-probe fits were not run in 3D (it is assumed for simplicity that the syst/nomi ratio is independent from uT)
             #
             # 2D SF without ut-dependence, still needed to compute systematics when uing 3D SF
-            sfFile = "allSmooth_GtoHout.root" if commonargs.isolationDefinition == "iso04" else "allSmooth_GtoHout_vtxAgnIso.root"
+            if commonargs.era == "2016PostVFP":
+                sfFile = "allSmooth_GtoHout.root" if commonargs.isolationDefinition == "iso04" else "allSmooth_GtoHout_vtxAgnIso.root"
+            elif commonargs.era == "2018":
+                if commonargs.isolationDefinition == "iso04":
+                    raise NotImplementedError(f"For Era {commonargs.era} Isolation Definition {commonargs.isolationDefinition} is not supported")
+                else:
+                    sfFile = "allSmooth_2018_vtxAgnIso.root"
+            elif commonargs.era == "2017": 
+                if commonargs.isolationDefinition == "iso04":
+                    raise NotImplementedError(f"For Era {commonargs.era} Isolation Definition {commonargs.isolationDefinition} is not supported")
+                else:
+                    sfFile = "allSmooth_2017_vtxAgnIso.root"
+            else:
+                raise NotImplementedError(f"Era {commonargs.era} is not yet supported")
 
         sfFile = f"{data_dir}/muonSF/{sfFile}"
     else:
