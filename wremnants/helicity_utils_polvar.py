@@ -21,24 +21,27 @@ logger = logging.child_logger(__name__)
 
 data_dir = common.data_dir
 
-def makehelicityWeightHelper_polvar(genVcharge=-1, fileTag="x0p40_y3p50_V6", filePath="."):
+def makehelicityWeightHelper_polvar(genVcharge=-1, fileTag="x0p30_y3p00_V10", filePath="."):
 
-    if genVcharge not in [-1, 1]:
-        errmsg = f"genVcharge must be -1 or 1, {genVcharge} was given"
+    if genVcharge not in [-1, 1, 0]:
+        errmsg = f"genVcharge must be -1, 1 or 0, {genVcharge} was given"
         logger.error(errmsg)
         raise ValueError(errmsg)
 
-    charges = { -1. : "minus", 1. : "plus"}
+    charges = { -1. : "minus", 1. : "plus", 0. : "Z"}
     # these inputs should be copied somewhere
     filenamePlus = f"{filePath}/fout_syst_wp_{fileTag}.root"
     filenameMinus = f"{filePath}/fout_syst_wm_{fileTag}.root"
+    #filenameZ = f"{filePath}/fout_syst_z_{fileTag}.root"
+    filenameZ = f"{filePath}/fout_syst_z_x0p40_y3p00_ZFitClip.root"
     filenames = {-1 : filenamePlus,
-                  1 : filenameMinus}
+                  1 : filenameMinus,
+                  0 : filenameZ}
 
     chargeTag = f"genChargeV{charges[genVcharge]}"
 
     logger.debug(f"Preparing helicity weights for theory agnostic analysis: gen V charge {charges[genVcharge]}")
-    folders = ["UL"] + [f"A{i}" for i in range(5)] # up to A4
+    folders = ["UL"] + [f"A{i}" for i in range(8)] # up to A4
 
     down_up_axis = hist.axis.Regular(2, -2., 2., underflow=False, overflow=False, name = "downUpVar")
     

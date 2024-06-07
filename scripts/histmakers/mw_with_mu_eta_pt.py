@@ -209,6 +209,7 @@ else:
 if isTheoryAgnosticPolVar:
     theoryAgnostic_helpers_minus = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=-1, fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
     theoryAgnostic_helpers_plus  = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=1,  fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
+    theoryAgnostic_helpers_z     = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=0,  fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
 
 # recoil initialization
 if not args.noRecoil:
@@ -571,10 +572,15 @@ def build_graph(df, dataset):
             if isTheoryAgnosticPolVar:
                 theoryAgnostic_helpers_cols = ["qtOverQ", "absYVgen", "chargeVgen", "csSineCosThetaPhigen", "nominal_weight"]
                 # assume to have same coeffs for plus and minus (no reason for it not to be the case)
-                for genVcharge in ["minus", "plus"]:
+                for genVcharge in ["minus", "plus", "z"]:
                     for coeffKey in theoryAgnostic_helpers_minus.keys():
                         logger.debug(f"Creating theory agnostic histograms with polynomial variations for {coeffKey} and {genVcharge} gen W charge")
-                        helperQ = theoryAgnostic_helpers_minus[coeffKey] if genVcharge == "minus" else theoryAgnostic_helpers_plus[coeffKey]
+                        if genVcharge == "minus":
+                            helperQ = theoryAgnostic_helpers_minus[coeffKey]
+                        elif genVcharge == "plus":
+                            helperQ = theoryAgnostic_helpers_plus[coeffKey]
+                        else:
+                            helperQ = theoryAgnostic_helpers_z[coeffKey]
                         df = df.Define(f"theoryAgnostic_{coeffKey}_{genVcharge}_tensor", helperQ, theoryAgnostic_helpers_cols)
                         noiAsPoiWithPolHistName = Datagroups.histName("nominal", syst=f"theoryAgnosticWithPol_{coeffKey}_{genVcharge}")
                         results.append(df.HistoBoost(noiAsPoiWithPolHistName, nominal_axes, [*nominal_cols, f"theoryAgnostic_{coeffKey}_{genVcharge}_tensor"], tensor_axes=helperQ.tensor_axes, storage=hist.storage.Double()))

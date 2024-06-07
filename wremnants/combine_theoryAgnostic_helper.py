@@ -39,9 +39,9 @@ class TheoryAgnosticHelper(object):
         self.poi_axes = poi_axes
         
     def add_theoryAgnostic_polVar_uncertainty(self):
-        coeffs = ["UL"] + [f"A{i}" for i in range(5)]
+        coeffs = ["UL"] + [f"A{i}" for i in range(8)]
         groupName = f"polVar{self.label}"
-        for genVcharge in ["minus", "plus"]:
+        for genVcharge in ["minus", "plus", "z"]:
             for coeffKey in coeffs:
                 self.card_tool.addSystematic(f"theoryAgnosticWithPol_{coeffKey}_{genVcharge}",
                                        group=groupName,

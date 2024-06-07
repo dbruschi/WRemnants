@@ -9,13 +9,15 @@ parser,initargs = common.common_parser(analysis_label)
 import ROOT
 import narf
 import wremnants
-from wremnants import theory_tools,syst_tools,theory_corrections, muon_validation, muon_calibration, muon_selections, unfolding_tools
+from wremnants import theory_tools,syst_tools,theory_corrections, muon_validation, muon_calibration, muon_selections, unfolding_tools, theoryAgnostic_tools, helicity_utils
 from wremnants.histmaker_tools import scale_to_data, aggregate_groups
 from wremnants.datasets.dataset_tools import getDatasets
+from wremnants.helicity_utils_polvar import makehelicityWeightHelper_polvar
 import hist
 import lz4.frame
 import math
 import time
+import numpy as np
 
 parser.add_argument("--csVarsHist", action='store_true', help="Add CS variables to dilepton hist")
 parser.add_argument("--axes", type=str, nargs="*", default=["mll", "ptll"], help="")
@@ -30,7 +32,19 @@ parser = common.set_parser_default(parser, "pt", common.get_default_ptbins(analy
 
 args = parser.parse_args()
 isUnfolding = args.analysisMode == "unfolding"
-isPoiAsNoi = isUnfolding and args.poiAsNoi
+isTheoryAgnostic = args.analysisMode in ["theoryAgnosticNormVar", "theoryAgnosticPolVar"]
+isTheoryAgnosticPolVar = args.analysisMode == "theoryAgnosticPolVar"
+isPoiAsNoi = (isUnfolding or isTheoryAgnostic) and args.poiAsNoi
+isFloatingPOIsTheoryAgnostic = isTheoryAgnostic and not isPoiAsNoi
+
+if isUnfolding or isTheoryAgnostic:
+    parser = common.set_parser_default(parser, "excludeFlow", True)
+    if isTheoryAgnostic:
+        if args.genAbsYVbinEdges and any(x < 0.0 for x in args.genAbsYVbinEdges):
+            raise ValueError("Option --genAbsYVbinEdges requires all positive values. Please check")
+    if isFloatingPOIsTheoryAgnostic:
+        logger.warning("Running theory agnostic with only nominal and mass weight histograms for now.")
+        parser = common.set_parser_default(parser, "onlyMainHistograms", True)
 
 args = parser.parse_args()
 
@@ -53,12 +67,13 @@ mass_min, mass_max = common.get_default_mz_window()
 ewMassBins = theory_tools.make_ew_binning(mass = 91.1535, width = 2.4932, initialStep=0.010)
 
 dilepton_ptV_binning = common.get_dilepton_ptV_binning(args.finePtBinning)
+coarseDilepton_ptV_binning = [0, 2, 4, 6, 8, 10, 13, 17, 22, 30, 40, 54, 100]
 # available axes for dilepton validation plots
 all_axes = {
     # "mll": hist.axis.Regular(60, 60., 120., name = "mll", overflow=not args.excludeFlow, underflow=not args.excludeFlow),
     "mll": hist.axis.Variable([60,70,75,78,80,82,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,100,102,105,110,120], name = "mll", overflow=not args.excludeFlow, underflow=not args.excludeFlow),    "yll": hist.axis.Regular(20, -2.5, 2.5, name = "yll", overflow=not args.excludeFlow, underflow=not args.excludeFlow),
-    "absYll": hist.axis.Regular(10, 0., 2.5, name = "absYll", underflow=False, overflow=not args.excludeFlow),
-    "ptll": hist.axis.Variable(dilepton_ptV_binning, name = "ptll", underflow=False, overflow=not args.excludeFlow),
+    "absYll": hist.axis.Regular(5, 0., 2.5, name = "absYll", underflow=False, overflow=not args.excludeFlow),
+    "ptll": hist.axis.Variable(coarseDilepton_ptV_binning, name = "ptll", underflow=False, overflow=not args.excludeFlow),
     "etaPlus": hist.axis.Variable([-2.4,-1.2,-0.3,0.3,1.2,2.4], name = "etaPlus"),
     "etaMinus": hist.axis.Variable([-2.4,-1.2,-0.3,0.3,1.2,2.4], name = "etaMinus"),
     "etaRegionSign": hist.axis.Regular(3, 0, 3, name = "etaRegionSign"),
@@ -70,8 +85,10 @@ all_axes = {
     "etaDiff": hist.axis.Variable([-4.8, -1.0, -0.6, -0.2, 0.2, 0.6, 1.0, 4.8], name = "etaDiff"),
     "ptPlus": hist.axis.Regular(int(args.pt[0]), args.pt[1], args.pt[2], name = "ptPlus"),
     "ptMinus": hist.axis.Regular(int(args.pt[0]), args.pt[1], args.pt[2], name = "ptMinus"),
-    "cosThetaStarll": hist.axis.Regular(20, -1., 1., name = "cosThetaStarll", underflow=False, overflow=False),
-    "phiStarll": hist.axis.Regular(20, -math.pi, math.pi, circular = True, name = "phiStarll"),
+    #"cosThetaStarll": hist.axis.Regular(20, -1., 1., name = "cosThetaStarll", underflow=False, overflow=False),
+    "cosThetaStarll": hist.axis.Regular(10, -1., 1., name = "cosThetaStarll", underflow=False, overflow=False),
+    #"phiStarll": hist.axis.Regular(20, -math.pi, math.pi, circular = True, name = "phiStarll"),
+    "phiStarll": hist.axis.Regular(10, -math.pi, math.pi, circular = True, name = "phiStarll"),
     #"charge": hist.axis.Regular(2, -2., 2., underflow=False, overflow=False, name = "charge") # categorical axes in python bindings always have an overflow bin, so use a regular
     "massVgen": hist.axis.Variable(ewMassBins, name = "massVgen", overflow=not args.excludeFlow, underflow=not args.excludeFlow),
     "ewMll": hist.axis.Variable(ewMassBins, name = "ewMll", overflow=not args.excludeFlow, underflow=not args.excludeFlow),
@@ -103,6 +120,13 @@ inclusive = hasattr(args, "inclusive") and args.inclusive
 if isUnfolding:
     unfolding_axes, unfolding_cols, unfolding_selections = differential.get_dilepton_axes(args.genAxes, common.get_gen_axes(isPoiAsNoi, dilepton_ptV_binning, inclusive), add_out_of_acceptance_axis=isPoiAsNoi)
     if not isPoiAsNoi:
+        datasets = unfolding_tools.add_out_of_acceptance(datasets, group = "Zmumu")
+
+elif isTheoryAgnostic:
+    theoryAgnostic_axes, theoryAgnostic_cols = differential.get_theoryAgnostic_axes(ptV_bins=args.genPtVbinEdges, absYV_bins=args.genAbsYVbinEdges, ptV_flow=isPoiAsNoi, absYV_flow=isPoiAsNoi)
+    axis_helicity = helicity_utils.axis_helicity_multidim
+    # the following just prepares the existence of the group for out-of-acceptance signal, but doesn't create or define the histogram yet
+    if not isPoiAsNoi or (isTheoryAgnosticPolVar and args.theoryAgnosticSplitOOA): # this splitting is not needed for the normVar version of the theory agnostic
         datasets = unfolding_tools.add_out_of_acceptance(datasets, group = "Zmumu")
 
 # define helpers
@@ -150,6 +174,12 @@ bias_helper = muon_calibration.make_muon_bias_helpers(args)
 theory_corrs = [*args.theoryCorr, *args.ewTheoryCorr]
 corr_helpers = theory_corrections.load_corr_helpers([d.name for d in datasets if d.name in common.vprocs], theory_corrs)
 
+# For polynominal variations
+if isTheoryAgnosticPolVar:
+    theoryAgnostic_helpers_minus = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=-1, fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
+    theoryAgnostic_helpers_plus  = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=1,  fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
+    theoryAgnostic_helpers_z     = wremnants.helicity_utils_polvar.makehelicityWeightHelper_polvar(genVcharge=0,  fileTag=args.theoryAgnosticFileTag, filePath=args.theoryAgnosticFilePath)
+
 def build_graph(df, dataset):
     logger.info(f"build graph for dataset: {dataset.name}")
     results = []
@@ -190,6 +220,29 @@ def build_graph(df, dataset):
                 axes = [*nominal_axes, *unfolding_axes] 
                 cols = [*nominal_cols, *unfolding_cols]
 
+    if isTheoryAgnostic and dataset.name == "ZmumuPostVFP": # should be isW to do also Wtaunu
+        df = theory_tools.define_prefsr_vars(df)
+        usePtOverM = False
+        if isTheoryAgnosticPolVar:
+            df = df.Define("qtOverQ", "ptVgen/massVgen") # FIXME: should there be a protection against mass=0 and what value to use?
+            OOAthresholds = args.theoryAgnosticFileTag.split("_")
+            ptVthresholdOOA   = float(OOAthresholds[0].replace("x","").replace("p","."))
+            absyVthresholdOOA = float(OOAthresholds[1].replace("y","").replace("p","."))
+            usePtOverM = True
+        if hasattr(dataset, "out_of_acceptance"):
+            logger.debug("Reject events in fiducial phase space")
+            df = theoryAgnostic_tools.select_fiducial_space(df, ptVthresholdOOA, absyVthresholdOOA, accept=False, select=True, usePtOverM=usePtOverM)
+        else:
+            # the in-acceptance selection must usually not be used to filter signal events when doing POIs as NOIs
+            if isFloatingPOIsTheoryAgnostic or (isTheoryAgnosticPolVar and args.theoryAgnosticSplitOOA):
+                logger.debug("Select events in fiducial phase space for theory agnostic analysis")
+                df = theoryAgnostic_tools.select_fiducial_space(df, ptVthresholdOOA, absyVthresholdOOA, accept=True, select=True, usePtOverM=usePtOverM)
+                # helicity axis is special, defined through a tensor later, theoryAgnostic_ only includes W pt and rapidity for now
+                if isFloatingPOIsTheoryAgnostic:
+                    axes = [*nominal_axes, *theoryAgnostic_axes]
+                    cols = [*nominal_cols, *theoryAgnostic_cols]
+                    theoryAgnostic_tools.add_xnorm_histograms(results, df, args, dataset.name, corr_helpers, qcdScaleByHelicity_helper, theoryAgnostic_axes, theoryAgnostic_cols)
+
     if not args.noAuxiliaryHistograms and isZ:
         # gen level variables before selection
         for obs in auxiliary_gen_axes:
@@ -208,7 +261,8 @@ def build_graph(df, dataset):
     df = muon_calibration.define_corrected_muons(df, cvh_helper, jpsi_helper, args, dataset, smearing_helper, bias_helper)
 
     df = muon_selections.select_veto_muons(df, nMuons=2)
-    df = muon_selections.select_good_muons(df, args.pt[1], args.pt[2], dataset.group, nMuons=2, use_trackerMuons=args.trackerMuons, use_isolation=True, isoDefinition=args.isolationDefinition)
+    #df = muon_selections.select_good_muons(df, args.pt[1], args.pt[2], dataset.group, nMuons=2, use_trackerMuons=args.trackerMuons, use_isolation=True, isoDefinition=args.isolationDefinition)
+    df = muon_selections.select_good_muons(df, args.pt[1], np.iinfo(np.int64).max, dataset.group, nMuons=2, use_trackerMuons=args.trackerMuons, use_isolation=True, isoDefinition=args.isolationDefinition)
 
     df = muon_selections.define_trigger_muons(df, dilepton=args.useDileptonTriggerSelection)
 
@@ -299,8 +353,31 @@ def build_graph(df, dataset):
         df = df.Define("exp_weight", weight_expr)
         df = theory_tools.define_theory_weights_and_corrs(df, dataset.name, corr_helpers, args)
 
+        if dataset.name == "ZmumuPostVFP" and isTheoryAgnostic and not hasattr(dataset, "out_of_acceptance"):
+            df = theoryAgnostic_tools.define_helicity_weights(df)
+
         results.append(df.HistoBoost("weight", [hist.axis.Regular(100, -2, 2)], ["nominal_weight"], storage=hist.storage.Double()))
         results.append(df.HistoBoost("nominal", axes, [*cols, "nominal_weight"]))
+
+    if isPoiAsNoi and dataset.name == "ZmumuPostVFP" and isTheoryAgnostic and not hasattr(dataset, "out_of_acceptance"): # TODO: might add Wtaunu at some point, not yet
+        noiAsPoiHistName = Datagroups.histName("nominal", syst="yieldsTheoryAgnostic")
+        logger.debug(f"Creating special histogram '{noiAsPoiHistName}' for theory agnostic to treat POIs as NOIs")
+        results.append(df.HistoBoost(noiAsPoiHistName, [*nominal_axes, *theoryAgnostic_axes], [*nominal_cols, *theoryAgnostic_cols, "nominal_weight_helicity"], tensor_axes=[axis_helicity]))
+        if isTheoryAgnosticPolVar:
+            theoryAgnostic_helpers_cols = ["qtOverQ", "absYVgen", "chargeVgen", "csSineCosThetaPhigen", "nominal_weight"]
+            # assume to have same coeffs for plus and minus (no reason for it not to be the case)
+            for genVcharge in ["z"]:
+                for coeffKey in theoryAgnostic_helpers_z.keys():
+                    logger.debug(f"Creating theory agnostic histograms with polynomial variations for {coeffKey} and {genVcharge} gen W charge")
+                    if genVcharge == "minus":
+                        helperQ = theoryAgnostic_helpers_minus[coeffKey]
+                    elif genVcharge == "plus":
+                        helperQ = theoryAgnostic_helpers_plus[coeffKey]
+                    else:
+                        helperQ = theoryAgnostic_helpers_z[coeffKey]
+                    df = df.Define(f"theoryAgnostic_{coeffKey}_{genVcharge}_tensor", helperQ, theoryAgnostic_helpers_cols)
+                    noiAsPoiWithPolHistName = Datagroups.histName("nominal", syst=f"theoryAgnosticWithPol_{coeffKey}_{genVcharge}")
+                    results.append(df.HistoBoost(noiAsPoiWithPolHistName, nominal_axes, [*nominal_cols, f"theoryAgnostic_{coeffKey}_{genVcharge}_tensor"], tensor_axes=helperQ.tensor_axes, storage=hist.storage.Double()))
 
     if isUnfolding and isPoiAsNoi and dataset.name == "ZmumuPostVFP":
         noiAsPoiHistName = Datagroups.histName("nominal", syst="yieldsUnfolding")
