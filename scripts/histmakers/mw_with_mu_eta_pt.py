@@ -1773,6 +1773,32 @@ def build_graph(df, dataset):
     else:
         nominal = df.HistoBoost("nominal", axes, [*cols, "nominal_weight"])
         results.append(nominal)
+        df = df.Define("utfilter", "goodMuons_tnpUT0 > -30 && goodMuons_tnpUT0 < 100")
+        df = df.Define("nominal_weight_utfilter", "nominal_weight*utfilter")
+        axis_utfilter = hist.axis.Boolean(name="up-down")
+        df = df.Define("zero", "0")
+        nominal_utfilter = df.HistoBoost(
+            "nominal_utfilter",
+            [*axes, axis_utfilter],
+            [*cols, "zero", "nominal_weight_utfilter"],
+        )
+        results.append(nominal_utfilter)
+        df = df.Define("utfilter2", "goodMuons_tnpUT0 > -30")
+        df = df.Define("nominal_weight_utfilter2", "nominal_weight*utfilter2")
+        nominal_utfilter2 = df.HistoBoost(
+            "nominal_utfilter2",
+            [*axes, axis_utfilter],
+            [*cols, "zero", "nominal_weight_utfilter2"],
+        )
+        results.append(nominal_utfilter2)
+        df = df.Define("utfilter3", "goodMuons_tnpUT0 < 100")
+        df = df.Define("nominal_weight_utfilter3", "nominal_weight*utfilter3")
+        nominal_utfilter3 = df.HistoBoost(
+            "nominal_utfilter3",
+            [*axes, axis_utfilter],
+            [*cols, "zero", "nominal_weight_utfilter3"],
+        )
+        results.append(nominal_utfilter3)
         results.append(
             df.HistoBoost(
                 "nominal_weight",

@@ -18,6 +18,7 @@ from wremnants import (
     muon_calibration,
     muon_efficiencies_binned,
     muon_efficiencies_smooth,
+    muon_efficiencies_smooth_onlytrigiso,
     muon_prefiring,
     muon_selections,
     pileup,
@@ -90,6 +91,9 @@ parser.add_argument(
     "--forceValidCVH",
     action="store_true",
     help="When not applying muon scale corrections (--muonCorrData none / --muonCorrMC none), require at list that the CVH corrected variables are valid",
+)
+parser.add_argument(
+    "--utClosureTest", action="store_true", help="Add ut axis for SF closure"
 )
 
 args = parser.parse_args()
@@ -223,6 +227,19 @@ axis_isoCat = hist.axis.Variable(
 
 nominal_axes = [axis_eta, axis_pt, common.axis_charge]
 nominal_cols = ["trigMuons_eta0", "trigMuons_pt0", "trigMuons_charge0"]
+
+if args.utClosureTest:
+    axis_utforclosure = hist.axis.Regular(
+        100,
+        -100.0,
+        100.0,
+        name="utforclosure",
+        overflow=False,
+        underflow=False,
+    )
+    nominal_axes.extend([axis_utforclosure])
+    nominal_cols.extend(["trigMuons_tnpUT0"])
+
 if args.addIsoMtAxes:
     nominal_axes.extend([axis_mtCat, axis_isoCat])
     nominal_cols.extend(["transverseMass", "trigMuons_relIso0"])
@@ -311,6 +328,19 @@ else:
             smooth3D=args.smooth3dsf,
             isoDefinition=args.isolationDefinition,
         )
+    )
+    (
+        muon_efficiency_helper_onlytrigiso,
+        muon_efficiency_helper_syst_onlytrigiso,
+        muon_efficiency_helper_stat_onlytrigiso,
+    ) = muon_efficiencies_smooth_onlytrigiso.make_muon_efficiency_helpers_smooth_onlytrigiso(
+        filename=args.sfFile,
+        era=era,
+        what_analysis=ROOT.wrem.AnalysisType.Wmass,
+        max_pt=axis_pt.edges[-1],
+        isoEfficiencySmoothing=args.isoEfficiencySmoothing,
+        smooth3D=args.smooth3dsf,
+        isoDefinition=args.isolationDefinition,
     )
 logger.info(f"SF file: {args.sfFile}")
 
@@ -651,6 +681,27 @@ def build_graph(df, dataset):
 
     if dataset.is_data:
         df = df.DefinePerSample("nominal_weight", "1.0")
+        if args.utClosureTest:
+            df = muon_selections.define_muon_uT_variable(
+                df,
+                isWorZ,
+                smooth3dsf=args.smooth3dsf,
+                colNamePrefix="trigMuons",
+                addWithTnpMuonVar=useTnpMuonVarForSF,
+                fullReco=args.utClosureTest,
+            )
+            df = muon_selections.define_muon_uT_variable(
+                df,
+                isWorZ,
+                smooth3dsf=args.smooth3dsf,
+                colNamePrefix="nonTrigMuons",
+                addWithTnpMuonVar=useTnpMuonVarForSF,
+                fullReco=args.utClosureTest,
+            )
+        # ut is defined in muon_selections.define_muon_uT_variable
+        if not useTnpMuonVarForSF:
+            df = df.Alias("trigMuons_tnpUT0", "trigMuons_uT0")
+            df = df.Alias("nonTrigMuons_tnpUT0", "nonTrigMuons_uT0")
     else:
         df = df.Define("weight_pu", pileup_helper, ["Pileup_nTrueInt"])
         df = df.Define("weight_vtx", vertex_helper, ["GenVtx_z", "Pileup_nTrueInt"])
@@ -691,6 +742,7 @@ def build_graph(df, dataset):
         columnsForSF = [
             f"{t}Muons_{v}" for t in ["trig", "nonTrig"] for v in muonVarsForSF
         ]
+        columnsForSF_trigMuon = [f"trigMuons_{v}" for v in muonVarsForSF]
 
         df = muon_selections.define_muon_uT_variable(
             df,
@@ -713,6 +765,7 @@ def build_graph(df, dataset):
 
         if not args.smooth3dsf:
             columnsForSF.remove("trigMuons_tnpUT0")
+            columnsForSF_trigMuon.remove("trigMuons_tnpUT0")
             columnsForSF.remove("nonTrigMuons_tnpUT0")
 
         if not args.noScaleFactors:
@@ -738,6 +791,12 @@ def build_graph(df, dataset):
                     muon_efficiency_helper,
                     columnsForSF,
                 )
+                df = df.Define(
+                    "weight_fullMuonSF_withTrackingReco_onlytrigiso",
+                    muon_efficiency_helper_onlytrigiso,
+                    columnsForSF_trigMuon,
+                )
+                # weight_expr += "*weight_fullMuonSF_withTrackingReco/weight_fullMuonSF_withTrackingReco_onlytrigiso"
                 weight_expr += "*weight_fullMuonSF_withTrackingReco"
 
         # prepare inputs for pixel multiplicity helpers

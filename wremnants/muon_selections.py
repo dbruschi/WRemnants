@@ -204,44 +204,62 @@ def define_muon_uT_variable(
     smooth3dsf=False,
     colNamePrefix="goodMuons",
     addWithTnpMuonVar=False,
+    fullReco=False,
 ):
     # TODO: instead of having "addWithTnpMuonVar" it might be better to call this function twice
     # TODO: possibily specifying the target variable name (_uT0 or _tnpUT0) and the input variables
     if smooth3dsf:
-        if isWorZ:
-            df = theory_tools.define_prefsr_vars(df)
+        if fullReco:
+            if colNamePrefix == "trigMuons":
+                utfirstcolname = "trigMuons"
+                utsecondcolname = "nonTrigMuons"
+            elif colNamePrefix == "nonTrigMuons":
+                utfirstcolname = "nonTrigMuons"
+                utsecondcolname = "trigMuons"
             df = df.Define(
-                f"{colNamePrefix}_uT0",
-                f"wrem::zqtproj0_boson({colNamePrefix}_pt0, {colNamePrefix}_phi0, ptVgen, phiVgen)",
+                f"{utfirstcolname}_uT0",
+                f"wrem::zqtproj0({utfirstcolname}_pt0, {utfirstcolname}_phi0, {utsecondcolname}_pt0, {utsecondcolname}_phi0)",
             )
             if addWithTnpMuonVar:
                 df = df.Define(
-                    f"{colNamePrefix}_tnpUT0",
-                    f"wrem::zqtproj0_boson(Muon_pt[{colNamePrefix}][0], Muon_phi[{colNamePrefix}][0], ptVgen, phiVgen)",
+                    f"{utfirstcolname}_tnpUT0",
+                    f"wrem::zqtproj0(Muon_pt[{utfirstcolname}][0], Muon_phi[{utfirstcolname}][0], Muon_pt[{utsecondcolname}][0], Muon_phi[{utsecondcolname}][0])",
                 )
         else:
-            # for background processes (Top and Diboson, since Wtaunu and Ztautau are part of isW or isZ)
-            # sum all gen e, mu, tau, or neutrinos to define the boson proxy
-            # choose particles with status 1 (stable) and statusFlag & 1 (prompt) or taus with status 2 (decayed)
-            # there is no double counting for leptons from tau decays, since they have status 1 but not statusFlag & 1
-            if "GenPart_leptonAndPhoton" not in df.GetColumnNames():
+            if isWorZ:
+                df = theory_tools.define_prefsr_vars(df)
                 df = df.Define(
-                    "GenPart_leptonAndPhoton",
-                    "(GenPart_status == 1 || (GenPart_status == 2 && abs(GenPart_pdgId) == 15)) && (GenPart_statusFlags & 1) && (abs(GenPart_pdgId) == 22 || (abs(GenPart_pdgId) >= 11 && abs(GenPart_pdgId) <= 16 ) )",
+                    f"{colNamePrefix}_uT0",
+                    f"wrem::zqtproj0_boson({colNamePrefix}_pt0, {colNamePrefix}_phi0, ptVgen, phiVgen)",
                 )
+                if addWithTnpMuonVar:
+                    df = df.Define(
+                        f"{colNamePrefix}_tnpUT0",
+                        f"wrem::zqtproj0_boson(Muon_pt[{colNamePrefix}][0], Muon_phi[{colNamePrefix}][0], ptVgen, phiVgen)",
+                    )
+            else:
+                # for background processes (Top and Diboson, since Wtaunu and Ztautau are part of isW or isZ)
+                # sum all gen e, mu, tau, or neutrinos to define the boson proxy
+                # choose particles with status 1 (stable) and statusFlag & 1 (prompt) or taus with status 2 (decayed)
+                # there is no double counting for leptons from tau decays, since they have status 1 but not statusFlag & 1
+                if "GenPart_leptonAndPhoton" not in df.GetColumnNames():
+                    df = df.Define(
+                        "GenPart_leptonAndPhoton",
+                        "(GenPart_status == 1 || (GenPart_status == 2 && abs(GenPart_pdgId) == 15)) && (GenPart_statusFlags & 1) && (abs(GenPart_pdgId) == 22 || (abs(GenPart_pdgId) >= 11 && abs(GenPart_pdgId) <= 16 ) )",
+                    )
+                    df = df.Define(
+                        "vecSumLeptonAndPhoton_TV2",
+                        f"wrem::transverseVectorSum(GenPart_pt[GenPart_leptonAndPhoton],GenPart_phi[GenPart_leptonAndPhoton])",
+                    )
                 df = df.Define(
-                    "vecSumLeptonAndPhoton_TV2",
-                    f"wrem::transverseVectorSum(GenPart_pt[GenPart_leptonAndPhoton],GenPart_phi[GenPart_leptonAndPhoton])",
+                    f"{colNamePrefix}_uT0",
+                    f"wrem::zqtproj0_boson({colNamePrefix}_pt0, {colNamePrefix}_phi0, vecSumLeptonAndPhoton_TV2)",
                 )
-            df = df.Define(
-                f"{colNamePrefix}_uT0",
-                f"wrem::zqtproj0_boson({colNamePrefix}_pt0, {colNamePrefix}_phi0, vecSumLeptonAndPhoton_TV2)",
-            )
-            if addWithTnpMuonVar:
-                df = df.Define(
-                    f"{colNamePrefix}_tnpUT0",
-                    f"wrem::zqtproj0_boson(Muon_pt[{colNamePrefix}][0], Muon_phi[{colNamePrefix}][0], vecSumLeptonAndPhoton_TV2)",
-                )
+                if addWithTnpMuonVar:
+                    df = df.Define(
+                        f"{colNamePrefix}_tnpUT0",
+                        f"wrem::zqtproj0_boson(Muon_pt[{colNamePrefix}][0], Muon_phi[{colNamePrefix}][0], vecSumLeptonAndPhoton_TV2)",
+                    )
     else:
         # this is a dummy, the uT axis when present will have a single bin
         df = df.Define(f"{colNamePrefix}_uT0", "0.0f")
